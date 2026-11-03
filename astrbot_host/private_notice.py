@@ -153,15 +153,22 @@ def prepare_private_notice_transport(controller, route):
 
 
 def _transport(controller, route):
-    """Only the original reverse-WebSocket account of this route may send."""
+    """Resolve the sender for one route.
+
+    QQ/OneBot 走原生反连 API；其它平台（如 agent_wechat）没有反向 WebSocket，
+    回落到平台实例本身——只要它实现了 OneBot 风格的 call_action 兼容层。
+    """
     client = getattr(route, "client", None)
     api = getattr(getattr(client, "_api", None), "_wsr_api", None)
     clients = getattr(client, "_wsr_api_clients", None)
-    if (api is None or type(api) is not controller.native_types.reverse_api
-            or clients is None or not clients.get(route.login)):
-        raise TaskError("host_notice_transport_changed",
-                        "native reverse-WebSocket account is unavailable")
-    return api
+    if (api is not None and type(api) is controller.native_types.reverse_api
+            and clients is not None and clients.get(route.login)):
+        return api
+    platform = controller.context.get_platform_inst(getattr(route, "platform_id", ""))
+    if platform is not None and callable(getattr(platform, "call_action", None)):
+        return platform
+    raise TaskError("host_notice_transport_changed",
+                    "native reverse-WebSocket account is unavailable")
 
 
 def private_notice_allowed(settings, *, group=False):
