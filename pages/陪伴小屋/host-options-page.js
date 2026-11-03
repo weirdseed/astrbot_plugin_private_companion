@@ -85,10 +85,10 @@ window.CompanionHostOptionsPage = (() => {
         <a class="button small" href="#manage/models">试听与语种 · 同上（语音配置）</a>
         <a class="button small" href="#manage/expression/text">分段与发送位置 · 表达 / 文本</a>
       </nav>
-      ${!value.enabled ? '<p class="host-options-warning" role="note">语音总开关关闭时，对象页启用语音也不会合成。</p>' : ""}
+      ${!value.enabled ? '<p class="host-options-warning" role="note">这里是兜底开关：对象页的语音设置优先，那边启用时仍会合成。</p>' : ""}
       <form data-host-form="voice" novalidate>
         <div class="host-options-row"><div class="host-options-copy"><strong>允许语音回复</strong>
-          <small>全局总开关。对象的「启用语音」也需要打开。</small></div>
+          <small>兜底开关：对象页没有单独设置语音时，按这里生效。</small></div>
           <label class="host-options-switch"><input type="checkbox" name="enabled" data-wb-field="enabled" ${value.enabled ? "checked" : ""}>
             <span>${value.enabled ? "已开启" : "已关闭"}</span></label></div>
         <div class="host-options-row"><div class="host-options-copy"><strong>基础触发概率</strong>

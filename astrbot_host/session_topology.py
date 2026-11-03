@@ -15,6 +15,7 @@ from companion_v2.adapters.astrbot.native import (
     event_account_id,
     event_peer_id,
     native_client_connected,
+    platform_self_id,
     route_id,
     client_of_event,
     supported_platform_name,
@@ -196,7 +197,7 @@ class SessionTopology:
                     # QQ Official and the webhook adapter do not expose a
                     # OneBot self-id. Their stable account key is the platform
                     # instance id, also used by event_identity.
-                    remember(meta.id, meta.id, platform_name=meta.name)
+                    remember(meta.id, platform_self_id(platform) or meta.id, platform_name=meta.name)
             except (AttributeError, ValueError, TypeError):
                 continue
         rows = sorted(result.values(), key=lambda row: (row["platform_id"], row["account_id"]))

@@ -517,6 +517,10 @@ class MultiHostSession:
             native_types.version, digest([runtime.installation_id, *modes]))
         relay_port = RelayToolPort(self.bridge, native_types=native_types)
         tool_port = CompositeAstrBotToolPort(native_tool_port, relay_port)
+        # Poke is a OneBot action; bridge adapters (agent_wechat) silently drop it,
+        # so the declaration must follow the platforms that can really deliver it.
+        poke_capable = bool(self.bridge.platforms) and all(
+            platform.meta().name == "aiocqhttp" for platform, _ in self.bridge.platforms.values())
         registry_fields = configuration_fields(profiles)
         registry_ids = {item.field_id for item in registry_fields}
         registry_fields += tuple(field for field in relay_configuration_fields()
@@ -527,7 +531,7 @@ class MultiHostSession:
             profiles=profiles, providers=tuple(model.local_provider() for model in self.models), budget=common.budget,
             budget_soft=common.budget_soft,
             default_provider_resolver=conversation_provider_resolver(native_context),
-            sender=LocalSender(self.sender_binding, self.send, supports_images=True, supports_poke=True), policy=common.policy, limits=common.limits, now=now,
+            sender=LocalSender(self.sender_binding, self.send, supports_images=True, supports_poke=poke_capable), policy=common.policy, limits=common.limits, now=now,
             tool_port=tool_port, segmentation=common.segmentation,
             # 记忆归属读的是别家插件自己公开的声明；跨插件读取只在这一个适配函数里，
             # 核心不反向导入宿主包。写入端口复用同一条发现路径：日记、梦境与主动
@@ -1311,6 +1315,12 @@ class MultiHostSession:
         try:
             raw = getattr(event.message_obj, "raw_message", None)
             sender = raw.get("sender") if isinstance(raw, Mapping) else None
+            if not isinstance(sender, Mapping):
+                # Bridge adapters keep no OneBot sender block; the host event
+                # still carries the sender, so use its nickname instead.
+                native_sender = getattr(event.message_obj, "sender", None)
+                nickname = getattr(native_sender, "nickname", None)
+                sender = {"nickname": nickname} if type(nickname) is str and nickname else None
             if not isinstance(sender, Mapping):
                 return
             group = context.scope.kind is ScopeKind.GROUP

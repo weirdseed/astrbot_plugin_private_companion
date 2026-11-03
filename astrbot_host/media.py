@@ -191,7 +191,7 @@ def _read_host_resolved_image(value):
     return content
 
 
-def read_local_attachment(value, root):
+def read_local_attachment(value, root, maximum_bytes=MAX_IMAGE_BYTES):
     """Read an attachment the host adapter already downloaded into its media dir."""
     if not root:
         raise TaskError("host_image_location_invalid", "local attachment has no trusted media directory")
@@ -202,7 +202,7 @@ def read_local_attachment(value, root):
         raise TaskError("host_image_unavailable", "local attachment is no longer available") from None
     if not target.is_relative_to(base) or not target.is_file():
         raise TaskError("host_image_location_invalid", "local attachment is outside the trusted media directory")
-    if target.stat().st_size > MAX_IMAGE_BYTES:
+    if target.stat().st_size > maximum_bytes:
         raise TaskError("host_image_limit", "image exceeds the intake byte budget")
     return target.read_bytes()
 

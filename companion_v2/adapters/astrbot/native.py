@@ -24,6 +24,7 @@ from companion_v2.conversation.forwards.models import CapturedForward, ForwardIn
 from companion_v2.conversation.media.audio.models import CapturedAudio, MAX_INPUT_AUDIOS, fits_audio_budget
 from companion_v2.conversation.media.video.models import CapturedVideo, MAX_VIDEOS, fits_video_budget
 from .files import file_locator, prepare_file_text, MAX_FILES
+from .media_paths import trusted_media_origin, trusted_media_root
 
 
 SUPPORTED_VERSIONS = frozenset(("4.27.2", "4.28.2", "4.29.0", "4.29.1"))
@@ -221,6 +222,31 @@ def event_account_id(event):
     raise ValueError("unsupported native event platform")
 
 
+def platform_self_id(platform):
+    """Best-effort login id for an adapter with no OneBot reverse clients.
+
+    The adapter instance id is a configuration name, not an account, so using
+    it would invent a ghost account.  Placeholder ids are skipped as well.
+    """
+    client = platform.get_client()
+    candidates = [getattr(client, "account_id", None)]
+    resolver = getattr(client, "resolve_account_id", None)
+    if callable(resolver):
+        try:
+            candidates.append(resolver())
+        except Exception:
+            pass
+    candidates += [getattr(client, "self_id", None), getattr(platform, "self_id", None)]
+    for candidate in candidates:
+        try:
+            candidate = route_id(candidate)
+        except ValueError:
+            continue
+        if candidate and candidate not in _PLACEHOLDER_ACCOUNT_IDS:
+            return candidate
+    return None
+
+
 def event_peer_id(event):
     sender = getattr(getattr(event, "message_obj", None), "sender", None)
     return route_id(getattr(sender, "user_id", None))
@@ -233,6 +259,11 @@ def event_group_id(event):
 def native_user_subject_id(platform_name, sender_id):
     sender_id = route_id(sender_id)
     if platform_name == "aiocqhttp":
+        return "onebot-user:" + sender_id
+    if platform_name == "agent_wechat":
+        # Naming debt: the WeChat bridge reuses the OneBot subject prefix because
+        # every stored grant, route and binding already keys on it.  Renaming it
+        # would orphan those rows, so only the platform gate widens here.
         return "onebot-user:" + sender_id
     if official_platform_name(platform_name):
         return "qq-official-user:" + sender_id
@@ -261,6 +292,21 @@ def native_client_connected(platform, account_id, client=None):
             return False
     except Exception:
         return False
+    # Bridging clients expose no OneBot client registry. Ask the adapter's own
+    # transport state; an adapter that reports neither keeps the old permissive
+    # answer so a missing attribute is not mistaken for a disconnect. This is
+    # therefore NOT a precise liveness check for those adapters: a dropped
+    # bridge still answers True and the failure surfaces later as a delivery
+    # error. Tighten only once the bridge publishes its own connection state.
+    for name in ("ws_connected", "authenticated"):
+        state = getattr(client, name, None)
+        if state is None:
+            continue
+        try:
+            state = state() if callable(state) else state
+        except Exception:
+            return False
+        return bool(state)
     return True
 
 
@@ -353,12 +399,16 @@ class NativeImageLocator:
 class NativeAudioLocator:
     position: int
     locator: str
+    origin: str | None = None
+    local_root: str | None = None
 
 
 @dataclass(frozen=True)
 class NativeVideoLocator:
     position: int
     locator: str
+    origin: str | None = None
+    local_root: str | None = None
 
 
 @dataclass(frozen=True)
@@ -837,6 +887,7 @@ class NativePrivateBridge:
             text_parts, locators, quote_locators, forward_locators, audio_locators, video_locators = [], [], [], [], [], []
             file_locators = []
             onebot = meta.name == "aiocqhttp"
+            media_origin, media_root = trusted_media_origin(event), trusted_media_root(event)
             for position, part in enumerate(parts):
                 kind = getattr(part.type, "value", part.type)
                 if kind == "Plain" and isinstance(part.text, str):
@@ -846,7 +897,7 @@ class NativePrivateBridge:
                     # routing metadata, not user-visible text.
                     continue
                 elif kind == "Image" and self.image_type is not None and type(part) is self.image_type:
-                    locators.append(image_locator(position, part.file, part.url))
+                    locators.append(image_locator(position, part.file, part.url, media_origin, media_root))
                     text_parts.append("\n[图片 " + str(len(locators)) + "]\n")
                 elif kind == "Reply" and self.reply_type is not None and type(part) is self.reply_type:
                     if onebot:
@@ -860,13 +911,13 @@ class NativePrivateBridge:
                     value = part.file if type(part.file) is str and part.file.startswith("base64://") else part.url or part.file
                     if type(value) is not str or not value:
                         raise TaskError("host_audio_unavailable", "voice has no original host attachment")
-                    audio_locators.append(NativeAudioLocator(position, value))
+                    audio_locators.append(NativeAudioLocator(position, value, media_origin, media_root))
                     text_parts.append("\n[语音 " + str(len(audio_locators)) + "]\n")
                 elif kind == "Video" and self.video_type is not None and type(part) is self.video_type:
                     value = part.file if type(part.file) is str and part.file.startswith("base64://") else part.url or part.file
                     if type(value) is not str or not value:
                         raise TaskError("host_video_unavailable", "video has no original host attachment")
-                    video_locators.append(NativeVideoLocator(position, value))
+                    video_locators.append(NativeVideoLocator(position, value, media_origin, media_root))
                     text_parts.append("\n[视频 " + str(len(video_locators)) + "]\n")
                 elif kind == "File" and self.file_type is not None and type(part) is self.file_type:
                     if len(file_locators) < MAX_FILES:

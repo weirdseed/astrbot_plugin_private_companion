@@ -1035,8 +1035,9 @@ window.CompanionProduct = (() => {
     }
     const entryUrlWithToken=new URL(contentPath,window.location.href);
     const token=entryUrlWithToken.searchParams.get("asset_token");
+    const entryPrefixes=[`/api/plugin/page/content/${HOST}/`,`/api/v1/plugins/${HOST}/`];
     if(entryUrlWithToken.origin!==assetUrl.origin||!token
-        ||!entryUrlWithToken.pathname.startsWith(`/api/plugin/page/content/${HOST}/`)) {
+        ||!entryPrefixes.some(prefix=>entryUrlWithToken.pathname.startsWith(prefix))) {
       const error=new Error("workspace entry configuration is invalid");
       error.workspaceCode="entry_invalid";
       throw error;

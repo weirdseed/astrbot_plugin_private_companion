@@ -7,12 +7,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from urllib.parse import urlparse as URL
 
 from companion_v2.adapters.astrbot.native import NativeAudioLocator
 from companion_v2.conversation.media.audio.models import AudioDescriptor, CapturedAudio, MAX_AUDIO_BYTES, MAX_WAVE_BYTES
 from companion_v2.conversation.media.models import MAX_IMAGE_BYTES
 from companion_v2.execution.models import TaskError
-from ..media import fetch_image as fetch_public_attachment
+from ..media import fetch_image as fetch_public_attachment, read_local_attachment
 
 
 DECODE_TIMEOUT = 8
@@ -63,10 +64,16 @@ async def load_native_audio(locator):
                 raise TaskError("host_audio_limit", "voice exceeds the intake byte budget")
             content = base64.b64decode(encoded, validate=True)
         else:
-            # The existing public attachment transport enforces this same byte
-            # ceiling and checks redirects plus the actual connector DNS result.
-            assert MAX_AUDIO_BYTES == MAX_IMAGE_BYTES
-            content = await fetch_public_attachment(value)
+            local_root = getattr(locator, "local_root", None)
+            if type(local_root) is str and not URL(value).scheme and Path(value).is_absolute():
+                # Bridge adapters hand over a temp file under an approved root;
+                # read_local_attachment resolves and re-checks that boundary.
+                content = await asyncio.to_thread(read_local_attachment, value, local_root)
+            else:
+                # The existing public attachment transport enforces this same byte
+                # ceiling and checks redirects plus the actual connector DNS result.
+                assert MAX_AUDIO_BYTES == MAX_IMAGE_BYTES
+                content = await fetch_public_attachment(value)
         return await decode_audio(content, locator.position)
     except TaskError as error:
         if error.code.startswith("host_image_"):

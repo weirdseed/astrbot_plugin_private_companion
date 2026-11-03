@@ -99,7 +99,7 @@ class PageWebAPI:
                 locale = "zh-CN"
             entry = await get_entry(
                 plugin_name=plugin_name,
-                page_name="陪伴小屋",
+                view_name="陪伴小屋",
                 username=username,
                 locale=locale,
             )

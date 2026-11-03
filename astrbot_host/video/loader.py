@@ -8,12 +8,13 @@ from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from urllib.parse import urlparse as URL
 
 from companion_v2.adapters.astrbot.native import NativeVideoLocator
 from companion_v2.conversation.media.models import CapturedImage, MAX_TURN_BYTES
 from companion_v2.conversation.media.video.models import CapturedVideo, VideoDescriptor, MAX_VIDEO_BYTES
 from companion_v2.execution.models import TaskError
-from ..media import fetch_attachment
+from ..media import fetch_attachment, read_local_attachment
 
 
 DECODE_TIMEOUT = 12
@@ -76,7 +77,11 @@ async def load_native_video(locator):
                 raise TaskError("host_video_limit", "video exceeds its intake byte budget")
             content = base64.b64decode(encoded, validate=True)
         else:
-            content = await fetch_attachment(value, maximum_bytes=MAX_VIDEO_BYTES)
+            local_root = getattr(locator, "local_root", None)
+            if type(local_root) is str and not URL(value).scheme and Path(value).is_absolute():
+                content = await asyncio.to_thread(read_local_attachment, value, local_root, MAX_VIDEO_BYTES)
+            else:
+                content = await fetch_attachment(value, maximum_bytes=MAX_VIDEO_BYTES)
         return await decode_video(content, locator.position)
     except TaskError as error:
         if error.code.startswith("host_image_"):

@@ -3,8 +3,6 @@
 import asyncio
 from dataclasses import dataclass, field, replace
 import json
-import os
-import tempfile
 
 from astrbot.core.message.components import Image, Reply
 from astrbot.core.utils.quoted_message.chain_parser import OneBotPayloadParser
@@ -12,6 +10,7 @@ from astrbot.core.utils.quoted_message.image_resolver import ImageResolver
 from astrbot.core.utils.quoted_message.onebot_client import OneBotClient
 
 from companion_v2.adapters.astrbot.history import extract_history_messages
+from companion_v2.adapters.astrbot.media_paths import trusted_media_origin, trusted_media_root
 from companion_v2.adapters.astrbot.native import NativeImageLocator
 from companion_v2.adapters.astrbot.quotes import image_locator
 from companion_v2.conversation.media.models import ImageConversationEvent, MAX_INPUT_IMAGES
@@ -60,32 +59,6 @@ class _QuotedImages:
         return False
 
 
-def _trusted_media_origin(event):
-    """The bridge serves chat attachments from its own loopback HTTP origin."""
-    meta = getattr(event, "platform_meta", None)
-    if getattr(meta, "name", None) != "agent_wechat":
-        return None
-    base = getattr(getattr(event, "client", None), "base_url", None)
-    return base if type(base) is str and base else None
-
-
-def _trusted_media_root(event):
-    """The WeChat bridge downloads inbound media into AstrBot's temp directory."""
-    meta = getattr(event, "platform_meta", None)
-    if getattr(meta, "name", None) != "agent_wechat":
-        return None
-    try:
-        from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-        base = get_astrbot_temp_path()
-    except Exception:
-        base = tempfile.gettempdir()
-    root = os.path.join(base, "agent_wechat_bridge")
-    if os.path.isdir(root):
-        return root
-    fallback = os.path.join(tempfile.gettempdir(), "agent_wechat_bridge")
-    return fallback if os.path.isdir(fallback) else root
-
-
 def direct_image_locators(locators):
     """Keep the direct attachments and drop every quoted reference.
 
@@ -100,8 +73,8 @@ def direct_image_locators(locators):
 
 def frozen_image_locators(event):
     """Freeze current attachments and quotes, in AstrBot's attachment order."""
-    origin = _trusted_media_origin(event)
-    local_root = _trusted_media_root(event)
+    origin = trusted_media_origin(event)
+    local_root = trusted_media_root(event)
     images, quotes = [], []
     for position, part in enumerate(getattr(getattr(event, "message_obj", None), "message", ())):
         if type(part) is Image:

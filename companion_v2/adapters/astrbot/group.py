@@ -22,6 +22,7 @@ from .native import (NativeAudioLocator, NativeConversationInput, NativePrivateB
                      event_peer_id, native_client_connected, native_id, native_user_subject_id,
                      route_id, supported_platform_name)
 from .quotes import NativeQuoteLocator, image_locator
+from .media_paths import trusted_media_origin, trusted_media_root
 from .forwards import NativeForwardLocator, resource_id
 from .group_quotes import mention_text
 from .files import file_locator, prepare_file_text, MAX_FILES
@@ -217,7 +218,7 @@ class NativeGroupBridge(NativePrivateBridge):
                 raise TaskError("host_target_unavailable", "group and account require an explicit target mapping")
             parts = self.component_reader(event) if self.component_reader is not None else tuple(event.message_obj.message)
             raw = getattr(event.message_obj, "raw_message", None)
-            original_parts = raw.get("message") if isinstance(raw, Mapping) else None
+            original_parts = self._onebot_segments(route, raw)
             self._validate_quote_components(original_parts, parts)
             text = self._text_only_parts(event, route)
             at, event_client = datetime.fromtimestamp(event.created_at, timezone.utc), client_of_event(event)
@@ -237,6 +238,18 @@ class NativeGroupBridge(NativePrivateBridge):
             return Outcome.failed(error.code, str(error))
         except Exception:
             return Outcome.failed("host_capture_failed", "group route, sender or persona could not be verified")
+
+    @staticmethod
+    def _onebot_segments(route, raw):
+        """Return the OneBot raw segments, or ``None`` for bridge adapters.
+
+        Bridge platforms (agent_wechat) put their own payload under
+        ``raw_message["message"]``.  That value is not an OneBot component list,
+        so treating it as one turns an ordinary text turn into a media error.
+        """
+        if route._platform_name != "aiocqhttp" or not isinstance(raw, Mapping):
+            return None
+        return raw.get("message")
 
     @staticmethod
     def _validate_quote_components(original_parts, parts):
@@ -330,12 +343,9 @@ class NativeGroupBridge(NativePrivateBridge):
             if target is None or account is None or target.bot_id != account.bot_id:
                 raise TaskError("host_target_unavailable", "group and account require an explicit target mapping")
             raw_message = getattr(event.message_obj, "raw_message", None)
-            original_parts = raw_message.get("message") if isinstance(raw_message, Mapping) else None
+            original_parts = self._onebot_segments(route, raw_message)
             onebot = route._platform_name == "aiocqhttp"
-            if not onebot:
-                # 桥接适配器（如 agent_wechat）的 raw_message 不是 OneBot 组件列表，
-                # 拿它的 "message" 键当组件会误判成 host_group_media_unsupported。
-                original_parts = None
+            media_origin, media_root = trusted_media_origin(event), trusted_media_root(event)
             if original_parts is not None and (not isinstance(original_parts, list)
                     or not 1 <= len(original_parts) <= 128
                     or any(not isinstance(p, Mapping) or not isinstance(p.get("data"), Mapping)
@@ -358,7 +368,7 @@ class NativeGroupBridge(NativePrivateBridge):
                     text_parts.append(mention_text(part.qq, route.account_id,
                                                    bot_ids=(event.message_obj.self_id, "qq_official")))
                 elif kind == "Image" and self.image_type is not None and type(part) is self.image_type:
-                    image_locators.append(image_locator(position, part.file, part.url))
+                    image_locators.append(image_locator(position, part.file, part.url, media_origin, media_root))
                     text_parts.append("\n[图片 " + str(len(image_locators)) + "]\n")
                 elif kind == "Reply" and self.reply_type is not None and type(part) is self.reply_type:
                     if onebot:
@@ -372,13 +382,13 @@ class NativeGroupBridge(NativePrivateBridge):
                     value = part.file if type(part.file) is str and part.file.startswith("base64://") else part.url or part.file
                     if type(value) is not str or not value:
                         raise TaskError("host_audio_unavailable", "group voice has no original host attachment")
-                    audio_locators.append(NativeAudioLocator(position, value))
+                    audio_locators.append(NativeAudioLocator(position, value, media_origin, media_root))
                     text_parts.append("\n[语音 " + str(len(audio_locators)) + "]\n")
                 elif kind == "Video" and self.video_type is not None and type(part) is self.video_type:
                     value = part.file if type(part.file) is str and part.file.startswith("base64://") else part.url or part.file
                     if type(value) is not str or not value:
                         raise TaskError("host_video_unavailable", "group video has no original host attachment")
-                    video_locators.append(NativeVideoLocator(position, value))
+                    video_locators.append(NativeVideoLocator(position, value, media_origin, media_root))
                     text_parts.append("\n[视频 " + str(len(video_locators)) + "]\n")
                 elif kind == "File" and self.file_type is not None and type(part) is self.file_type:
                     if len(file_locators) < MAX_FILES:

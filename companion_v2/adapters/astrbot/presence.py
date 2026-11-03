@@ -22,6 +22,10 @@ class OneBotPresencePort:
                 require(check)
             require(self.bridge.identities.authorize(context.actor, scope=scope, capability=capability, observed_at=self.now()))
             await self.bridge.verify_role(scope, context.role_binding)
+            if self.bridge.platform_name(scope) != "aiocqhttp":
+                # Only OneBot has the reverse-API typing transport; bridge adapters
+                # must report it as absent instead of failing inside client._api.
+                return {"state": "not_started", "code": "presence_transport_unavailable"}
             client = self.bridge.client(scope)
             api = client._api._wsr_api
             if (type(api) is not self.reverse_api_type or api._api_clients is not client._wsr_api_clients

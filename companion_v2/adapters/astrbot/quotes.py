@@ -30,18 +30,22 @@ def image_locator(position, file, url, origin=None, local_root=None):
                               local_root if type(local_root) is str and local_root else None)
 
 
-def audio_locator(position, file, url):
+def audio_locator(position, file, url, origin=None, local_root=None):
     value = file if type(file) is str and file.startswith("base64://") else url or file
     if type(value) is not str or not value:
         raise TaskError("host_audio_unavailable", "voice has no original host attachment")
-    return NativeAudioLocator(position, value)
+    return NativeAudioLocator(position, value,
+                              origin if type(origin) is str and origin else None,
+                              local_root if type(local_root) is str and local_root else None)
 
 
-def video_locator(position, file, url):
+def video_locator(position, file, url, origin=None, local_root=None):
     value = file if type(file) is str and file.startswith("base64://") else url or file
     if type(value) is not str or not value:
         raise TaskError("host_video_unavailable", "video has no original host attachment")
-    return NativeVideoLocator(position, value)
+    return NativeVideoLocator(position, value,
+                              origin if type(origin) is str and origin else None,
+                              local_root if type(local_root) is str and local_root else None)
 
 
 async def read_private_quote(locator, *, client, scope, reverse_api_type, image_loader, audio_loader=None,

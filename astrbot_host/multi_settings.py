@@ -321,8 +321,14 @@ class MultiHostSettings:
                 raise ValueError()
         except ValueError:
             raise HostControlError("host_mappings_conflict", "accounts, target routes and native persona mappings must be unambiguous") from None
-        capabilities = section.get("capabilities", [*sorted(REQUIRED_CAPABILITIES), "memory.read", "memory.propose",
-                                                    "memory.reflect", "memory.subscribe"])
+        # The conversation prompt asks the model for memo/reminder actions, so the
+        # default catalog must grant them; otherwise a fresh install silently
+        # strips those tools from every turn.
+        capabilities = section.get("capabilities", sorted({
+            *REQUIRED_CAPABILITIES, "memory.read", "memory.propose", "memory.reflect", "memory.subscribe",
+            "memory.forget", "memo.create", "memo.edit", "memo.complete", "memo.reopen", "memo.pin",
+            "memo.unpin", "memo.delete", "reminder.create", "reminder.read", "reminder.list",
+            "reminder.cancel", "reminder.reschedule", "operation.lookup"}))
         if (type(capabilities) is not list or any(type(item) is not str for item in capabilities)
                 or len(set(capabilities)) != len(capabilities)
                 or not REQUIRED_CAPABILITIES.issubset(capabilities) or not set(capabilities).issubset(ALLOWED_CAPABILITIES)):

@@ -44,7 +44,7 @@ class WorkspaceEntryApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("asset_token=fresh", response["data"]["content_path"])
         self.page_service.get_plugin_page_entry_config.assert_awaited_once_with(
             plugin_name=PLUGIN_NAME,
-            page_name="陪伴小屋",
+            view_name="陪伴小屋",
             username="admin",
             locale="en-US",
         )
