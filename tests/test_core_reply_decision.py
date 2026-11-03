@@ -114,7 +114,7 @@ class CoreReplyDecisionTests(GroupFixture, unittest.IsolatedAsyncioTestCase):
             prepared = await self.intake(event)
         self.assertEqual(len(self.calls), 1)
         self.assertTrue(event.call_llm)
-        self.assertFalse(event.is_at_or_wake_command)
+        self.assertFalse(getattr(event, "is_at_or_wake_command", False))
         self.assert_no_provider_or_send(event)
         self.assertIn("reason_source=laya", "\n".join(captured.output))
         self.assertIn("action=silent", "\n".join(captured.output))
@@ -271,14 +271,15 @@ class CoreReplyDecisionTests(GroupFixture, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(permitted.call_llm)
         self.assert_no_provider_or_send(permitted)
 
-    async def test_private_turn_uses_astrbot_default_without_laya_delay(self):
+    async def test_private_turn_uses_laya_decision_before_core_reply(self):
         self.prediction = laya_result({"action": "silent"})
         event = self.event(identifier="private-silence", text="不用回复，记一下")
         prepared = await self.intake(event)
-        self.assertEqual(self.calls, [])
-        self.assertEqual(prepared["laya_decision"]["reason"], "private_default_reply")
-        self.assertFalse(prepared["laya_decision"]["suppress_reply"])
-        self.assertTrue(event.is_at_or_wake_command)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0][0]["scope_kind"], "private")
+        self.assertEqual(prepared["laya_decision"]["applied_decision"]["action"], "silent")
+        self.assertTrue(prepared["laya_decision"]["suppress_reply"])
+        self.assertFalse(getattr(event, "is_at_or_wake_command", False))
         self.assert_no_provider_or_send(event)
 
     async def test_native_private_and_group_resolvers_read_same_global_configuration(self):

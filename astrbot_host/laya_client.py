@@ -108,20 +108,31 @@ def _source_key(local_model_path=""):
     return str(Path(local_model_path).expanduser().resolve()) if local_model_path.strip() else DEFAULT_MODEL
 
 
-def _cuda_available():
+def _accel_device():
+    """返回可用的加速设备名：优先 CUDA，其次 Apple Silicon 的 MPS。"""
     try:
         import torch
     except ImportError:
-        return False
+        return ""
     try:
-        return bool(torch.cuda.is_available())
+        if torch.cuda.is_available():
+            return "cuda"
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return "mps"
     except Exception:
-        return False
+        return ""
+    return ""
+
+
+def _cuda_available():
+    """兼容原语义：有任意加速设备即视为可用（CUDA 或 MPS）。"""
+    return bool(_accel_device())
 
 
 def _require_cuda():
     if not _cuda_available():
-        raise LayaClientError("laya_gpu_unavailable", "当前 AstrBot Python 的 PyTorch 不支持 CUDA，已跳过本地 Laya")
+        raise LayaClientError("laya_gpu_unavailable", "当前 AstrBot Python 的 PyTorch 没有可用加速设备（CUDA/MPS），已跳过本地 Laya")
 
 
 def _local_router(local_model_path=""):
@@ -144,7 +155,7 @@ def _local_router(local_model_path=""):
                     "rl_agent_config.json", "model.safetensors", "tokenizer/tokenizer.json", "encoder/config.json")):
                 raise LayaClientError("laya_model_path_invalid", "本地检查点缺少完整的 Laya 权重、配置或分词器")
             options = {"models": {DEFAULT_MODEL: str(installed)}} if installed is not None else {}
-            router = Router(default=DEFAULT_MODEL, max_loaded=1, device="cuda", **options)
+            router = Router(default=DEFAULT_MODEL, max_loaded=1, device=_accel_device() or "cpu", **options)
         except LayaClientError:
             raise
         except Exception as error:
@@ -170,8 +181,8 @@ def _local_predict(state: str, questions: dict, *, local_model_path=""):
             model_load_started = perf_counter()
             agent = loader(DEFAULT_MODEL) if callable(loader) else None
             model_load_ms = round((perf_counter() - model_load_started) * 1000)
-            if not str(getattr(agent, "device", "")).lower().startswith("cuda"):
-                raise LayaClientError("laya_gpu_unavailable", "Laya 模型没有加载到 CUDA 设备，已跳过本地推理")
+            if not str(getattr(agent, "device", "")).lower().startswith(("cuda", "mps")):
+                raise LayaClientError("laya_gpu_unavailable", "Laya 模型没有加载到加速设备（CUDA/MPS），已跳过本地推理")
             fallback_before = getattr(agent, "cpu_fallback_count", None)
             device_before = str(getattr(agent, "device", "unknown"))
             prediction_started = perf_counter()
@@ -260,11 +271,12 @@ def _torch_install_command():
 def _torch_runtime_status():
     """Expose the installed torch build so the page can explain CUDA failures."""
     status = {"torch_version": "", "cuda_version": "", "cuda_available": False,
-              "torch_install_command": _torch_install_command()}
+              "accel_device": "", "torch_install_command": _torch_install_command()}
     try:
         import torch
         status["torch_version"] = str(getattr(torch, "__version__", "") or "")
-        status["cuda_available"] = bool(torch.cuda.is_available())
+        status["cuda_available"] = _cuda_available()
+        status["accel_device"] = _accel_device()
         status["cuda_version"] = str(getattr(torch.version, "cuda", "") or "")
     except Exception:
         pass
@@ -686,6 +698,18 @@ class LayaDecisionClient:
             "connection_test": True,
         }, enabled_fields=enabled_fields)
 
+    def _warm(self) -> bool:
+        """模型是否已载入内存。未就绪时返回 False，让上层本轮跳过决策而不是干等。"""
+        health = self.endpoint.replace("/v1/systemone", "/health")
+        if health == self.endpoint:          # 非 Jev 传输（chat_completions / workers-ai）不做预热探测
+            return True
+        try:
+            with urlopen(Request(health, method="GET"), timeout=min(0.8, self.timeout_seconds)) as response:
+                payload = json.loads(response.read(262_144).decode("utf-8", "replace"))
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+            return False
+        return bool(payload.get("loaded"))
+
     def _parse_body(self, raw: str) -> dict:
         document = _parse_document(raw)
         if self.request_format == "cloudflare":
@@ -703,6 +727,8 @@ class LayaDecisionClient:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
+        if not await asyncio.to_thread(self._warm):
+            raise LayaClientError("laya_initializing", "Laya 模型正在加载，本轮跳过判断")
         request = Request(self.endpoint, data=body, headers=headers, method="POST")
 
         def send() -> str:

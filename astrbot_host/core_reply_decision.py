@@ -172,17 +172,6 @@ def core_decision_facts(event, prepared, application, *, at):
 async def prepare_core_reply_decision(event, prepared, *, application, now=None):
     """Inference failures retain the ordinary authorized core reply path."""
     started = perf_counter()
-    if prepared.get("channel") == "private":
-        result = {"status": "skipped", "reason": "private_default_reply",
-                  "applied_decision": {}, "suppress_reply": False,
-                  "elapsed_ms": round((perf_counter() - started) * 1000)}
-        prepared["laya_decision"] = result
-        logger.info(
-            "[CompanionV2] Laya 核心接话判断 event_ref=%s turn_id=%s channel=private "
-            "status=skipped action=reply reason=private_default_reply elapsed_ms=%s",
-            prepared.get("event_ref"), prepared.get("turn_id"), result["elapsed_ms"],
-        )
-        return result
     resolver = getattr(application, "laya_decision_resolver", None)
     service = None
     result = {"status": "skipped", "reason": "laya_resolver_unavailable"}
