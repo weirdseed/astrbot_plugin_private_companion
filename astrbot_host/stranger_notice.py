@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
-from companion_v2.adapters.astrbot.native import account_number
+from companion_v2.adapters.astrbot.native import account_number, client_of_event
 from companion_v2.execution.models import encode, stamp
 from companion_v2.foundation.refs import ScopeKind
 
@@ -63,7 +63,7 @@ def stranger_route(controller, event):
     if not login or not peer:
         return None
     platform = controller.context.get_platform_inst(meta.id)
-    if platform is None or platform.get_client() is not event.bot:
+    if platform is None or platform.get_client() is not client_of_event(event):
         return None
     if (platform.meta().name != "aiocqhttp" or meta.name != "aiocqhttp"
             or not getattr(controller, "native_types", None)

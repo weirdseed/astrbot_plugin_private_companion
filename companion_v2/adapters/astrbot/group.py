@@ -18,7 +18,7 @@ from companion_v2.conversation.forwards.models import CapturedForward, fits_forw
 from companion_v2.conversation.quotes.models import CapturedQuote, event_images, event_audios, event_videos, message_number
 from companion_v2.conversation.quotes.forward_models import CapturedQuoteMedia, CapturedForwardQuote, CapturedForwardQuoteMedia
 from .native import (NativeAudioLocator, NativeConversationInput, NativePrivateBridge, NativeVideoLocator,
-                     MEDIA_PREPARE_TIMEOUT, account_number, event_account_id, event_group_id,
+                     MEDIA_PREPARE_TIMEOUT, account_number, client_of_event, event_account_id, event_group_id,
                      event_peer_id, native_client_connected, native_id, native_user_subject_id,
                      route_id, supported_platform_name)
 from .quotes import NativeQuoteLocator, image_locator
@@ -220,7 +220,7 @@ class NativeGroupBridge(NativePrivateBridge):
             original_parts = raw.get("message") if isinstance(raw, Mapping) else None
             self._validate_quote_components(original_parts, parts)
             text = self._text_only_parts(event, route)
-            at, event_client = datetime.fromtimestamp(event.created_at, timezone.utc), event.bot
+            at, event_client = datetime.fromtimestamp(event.created_at, timezone.utc), client_of_event(event)
             principal = AuthenticatedHostPrincipal(self.installation_id, self.host_id, route.platform_id,
                 route.sender_id, account.bot_id, route.account_id)
             cid, role, instruction = await self._role(account, route.session_id)
@@ -332,6 +332,10 @@ class NativeGroupBridge(NativePrivateBridge):
             raw_message = getattr(event.message_obj, "raw_message", None)
             original_parts = raw_message.get("message") if isinstance(raw_message, Mapping) else None
             onebot = route._platform_name == "aiocqhttp"
+            if not onebot:
+                # 桥接适配器（如 agent_wechat）的 raw_message 不是 OneBot 组件列表，
+                # 拿它的 "message" 键当组件会误判成 host_group_media_unsupported。
+                original_parts = None
             if original_parts is not None and (not isinstance(original_parts, list)
                     or not 1 <= len(original_parts) <= 128
                     or any(not isinstance(p, Mapping) or not isinstance(p.get("data"), Mapping)
@@ -419,7 +423,7 @@ class NativeGroupBridge(NativePrivateBridge):
                                  if allow_text_fallback else None)
             except TaskError:
                 fallback_text = None
-            at, event_client = datetime.fromtimestamp(event.created_at, timezone.utc), event.bot
+            at, event_client = datetime.fromtimestamp(event.created_at, timezone.utc), client_of_event(event)
             principal = AuthenticatedHostPrincipal(self.installation_id, self.host_id, route.platform_id,
                 route.sender_id, account.bot_id, route.account_id)
             # All mutable native fields above are frozen before host I/O. Identity

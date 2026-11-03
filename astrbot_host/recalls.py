@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
 
-from companion_v2.adapters.astrbot.native import account_number
+from companion_v2.adapters.astrbot.native import account_number, client_of_event
 from companion_v2.conversation.quotes.models import message_number
 from companion_v2.conversation.recalls import MessageRecall
 from companion_v2.execution.models import TaskError
@@ -74,7 +74,7 @@ def authenticate_notice_route(controller, event, kind, *, expected_post="notice"
         raise TaskError("host_recall_route", "notice account is outside the pinned native bridge")
     platform, client = pinned
     if (controller.context.get_platform_inst(meta.id) is not platform or platform.get_client() is not client
-            or event.bot is not client or platform.meta().id != meta.id or platform.meta().name != "aiocqhttp"
+            or client_of_event(event) is not client or platform.meta().id != meta.id or platform.meta().name != "aiocqhttp"
             or meta.name != "aiocqhttp" or not client._wsr_api_clients.get(login)):
         raise TaskError("host_recall_account_changed", "notice must come from the current connected platform and client")
     event_kind = "GroupMessage" if kind is ScopeKind.GROUP else "FriendMessage"

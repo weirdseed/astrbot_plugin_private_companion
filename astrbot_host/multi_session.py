@@ -13,6 +13,7 @@ from companion_v2.adapters.astrbot.memory_owner import memory_owner_provider
 from companion_v2.adapters.astrbot.memory_push import memory_push_provider
 from companion_v2.adapters.astrbot.native import (
     NativeConversationInput, NativePrivateBridge, bounded_native_lookup, event_account_id,
+    client_of_event,
     event_peer_id, native_client_connected, native_id, native_user_subject_id,
     supported_platform_name,
 )
@@ -164,7 +165,7 @@ class MultiPrivateBridge(NativePrivateBridge):
                     or event.unified_msg_origin != self._umo(platform_id, sender)
                     or account is None or target is None or target.bot_id != account.bot_id):
                 raise TaskError("host_route_mismatch", "event fields do not identify one registered private route")
-            event_client = event.bot
+            event_client = client_of_event(event)
             platform = self.context.get_platform_inst(platform_id)
             if (platform is None or platform.get_client() is not event_client
                     or not native_client_connected(platform, login, event_client)):
@@ -215,8 +216,8 @@ class MultiPrivateBridge(NativePrivateBridge):
             account = self.accounts.get((meta.id, login))
             platform = self.context.get_platform_inst(meta.id)
             if (account is None or account.bot_id != target.bot_id or platform is None
-                    or platform.get_client() is not event.bot
-                    or not native_client_connected(platform, login, event.bot)):
+                    or platform.get_client() is not client_of_event(event)
+                    or not native_client_connected(platform, login, client_of_event(event))):
                 raise TaskError("host_client_mismatch", "private event did not originate from its registered Bot account")
             self.authority.ensure_actor(target)
         except (ValueError, AttributeError, TypeError):

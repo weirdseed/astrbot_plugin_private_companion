@@ -35,8 +35,10 @@ VERIFIED_SERIES = frozenset(("4.27", "4.28", "4.29"))
 # Native routing is verified for the OneBot reverse-WS adapter and the two
 # QQ Official adapter names AstrBot exposes.  Keeping the allow-list here
 # prevents an arbitrary adapter from inheriting route privileges by accident.
-SUPPORTED_PLATFORM_NAMES = frozenset(("aiocqhttp", "qq_official", "qq_official_webhook"))
+SUPPORTED_PLATFORM_NAMES = frozenset(("aiocqhttp", "qq_official", "qq_official_webhook", "agent_wechat"))
 OFFICIAL_PLATFORM_NAMES = frozenset(("qq_official", "qq_official_webhook"))
+# Ids that identify the adapter rather than a login; never used as an account key.
+_PLACEHOLDER_ACCOUNT_IDS = frozenset(("agent_wechat", "unknown_selfid", "qq_official"))
 _REPORTED_UNVERIFIED = set()
 NATIVE_LOOKUP_TIMEOUT_SECONDS = 20
 NATIVE_LOOKUP_SLOW_SECONDS = 2
@@ -185,12 +187,23 @@ def event_platform_id(event):
     return str(getattr(getattr(event, "platform_meta", None), "id", "") or "")
 
 
+def client_of_event(event):
+    """Return the platform client object behind one native event.
+
+    OneBot exposes it as ``event.bot``; the agent_wechat bridge keeps the same
+    connection on ``event.client`` and has no ``bot`` attribute at all.
+    """
+    return getattr(event, "bot", None) or getattr(event, "client", None)
+
+
 def event_account_id(event):
     """Return the stable account key for one admitted native event.
 
     OneBot identifies a login by ``message.self_id``.  QQ Official exposes a
     synthetic self id on C2C/direct events, so the configured platform
-    instance id is the stable account projection there.
+    instance id is the stable account projection there.  A bridging adapter
+    keeps the logged-in account on ``message.self_id`` too, while
+    ``platform_meta.id`` only names the adapter instance.
     """
     message = getattr(event, "message_obj", None)
     name = event_platform_name(event)
@@ -198,6 +211,13 @@ def event_account_id(event):
         return route_id(event_platform_id(event))
     if name == "aiocqhttp":
         return account_number(getattr(message, "self_id", None))
+    for candidate in (getattr(message, "self_id", None), event_platform_id(event)):
+        try:
+            candidate = route_id(candidate)
+        except ValueError:
+            continue
+        if candidate and candidate not in _PLACEHOLDER_ACCOUNT_IDS:
+            return candidate
     raise ValueError("unsupported native event platform")
 
 
@@ -323,6 +343,10 @@ class NativeImageLocator:
     # Set only after the trusted host ImageResolver resolves a quoted image.
     # Ordinary network message components never gain local-path read authority.
     host_resolved: bool = False
+    # A bridging adapter names the origin that served the attachment and the
+    # directory it downloads inbound media into; both stay unset for OneBot.
+    origin: str | None = None
+    local_root: str | None = None
 
 
 @dataclass(frozen=True)
@@ -868,7 +892,7 @@ class NativePrivateBridge:
             principal = AuthenticatedHostPrincipal(self.installation_id, self.host_id, platform_id, sender, account.bot_id, login)
             actor = require(self.identities.resolve_authenticated(principal, observed_at=at))
             # Freeze all event fields before any host await; later event middleware cannot restamp them.
-            event_client = event.bot
+            event_client = client_of_event(event)
             cid, role, instruction = await self._role(account, sender)
             scope = ScopeRef(self.installation_id, platform_id, ScopeKind.PRIVATE, sender, account.bot_id, login, cid, sender)
             if event_client is not self.client(scope):

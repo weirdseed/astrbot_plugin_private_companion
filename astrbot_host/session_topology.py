@@ -16,6 +16,7 @@ from companion_v2.adapters.astrbot.native import (
     event_peer_id,
     native_client_connected,
     route_id,
+    client_of_event,
     supported_platform_name,
 )
 from companion_v2.execution.models import TaskError, digest
@@ -404,14 +405,15 @@ class SessionTopology:
         if not supported_platform_name(meta.name):
             logger.debug("[CompanionV2] 跳过事件：平台 %s 不在支持名单", meta.name)
             return
-        if platform.get_client() is not event.bot:
+        if platform.get_client() is not client_of_event(event):
             logger.debug(
-                "[CompanionV2] 跳过事件：事件携带的 bot(%s) 不是平台当前的 client",
-                type(getattr(event, "bot", None)).__name__,
+                "[CompanionV2] 跳过事件：事件携带的 client(%s) 不是平台当前的 client",
+                type(client_of_event(event)).__name__,
             )
             return
-        if not native_client_connected(platform, login, event.bot):
+        if not native_client_connected(platform, login, client_of_event(event)):
             logger.debug("[CompanionV2] 跳过事件：账号 %s 没有可用的原生连接", login)
+            return
             return
         if kind == "group":
             native = group_event_route(event)
