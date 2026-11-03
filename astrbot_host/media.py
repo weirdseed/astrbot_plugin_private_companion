@@ -39,9 +39,50 @@ def _resolved_publicly(value):
     return address.is_global or address in _FAKE_IP_NETWORK
 
 
-def public_url(value):
+def _origin_of(value):
+    try:
+        parsed = URL(value)
+        return (parsed.scheme, parsed.raw_host, parsed.port or 80)
+    except Exception:
+        return None
+
+
+def _loopback_literal(host):
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def trusted_url(value, trusted_origins):
+    """Accept an attachment served by the host's own bridge on a loopback literal.
+
+    Only the exact scheme/host/port that the platform client reported is trusted,
+    and only when it is a literal loopback address: no hostnames, no other ports.
+    """
+    if not trusted_origins:
+        return None
+    try:
+        parsed = URL(value)
+    except Exception:
+        return None
+    if (parsed.scheme != "http" or parsed.raw_user is not None or parsed.raw_password is not None
+            or parsed.fragment or not _loopback_literal(parsed.raw_host)):
+        return None
+    origin = (parsed.scheme, parsed.raw_host, parsed.port or 80)
+    for candidate in trusted_origins:
+        known = _origin_of(candidate)
+        if known and known[0] == "http" and _loopback_literal(known[1]) and known == origin:
+            return str(parsed)
+    return None
+
+
+def public_url(value, *, trusted_origins=()):
     if type(value) is not str or not value or len(value) > 8192 or any(c.isspace() or ord(c) < 32 for c in value):
         raise TaskError("host_image_location_invalid", "image URL is invalid")
+    local = trusted_url(value, trusted_origins)
+    if local is not None:
+        return local
     try:
         # Use the connector's own URL normalization, including IDNA hosts.
         parsed = URL(value)
@@ -74,15 +115,16 @@ class PublicImageResolver(aiohttp.ThreadedResolver):
         return values
 
 
-async def fetch_image(value):
-    return await fetch_attachment(value, maximum_bytes=MAX_IMAGE_BYTES)
+async def fetch_image(value, *, trusted_origins=()):
+    return await fetch_attachment(value, maximum_bytes=MAX_IMAGE_BYTES, trusted_origins=trusted_origins)
 
 
-async def fetch_attachment(value, *, maximum_bytes):
-    current = public_url(value)
-    resolver = PublicImageResolver()
+async def fetch_attachment(value, *, maximum_bytes, trusted_origins=()):
+    current = public_url(value, trusted_origins=trusted_origins)
+    resolver = None if trusted_url(current, trusted_origins) is not None else PublicImageResolver()
     try:
-        connector = aiohttp.TCPConnector(resolver=resolver, limit=1)
+        connector = (aiohttp.TCPConnector(limit=1) if resolver is None
+                     else aiohttp.TCPConnector(resolver=resolver, limit=1))
         async with aiohttp.ClientSession(connector=connector, trust_env=False,
                                         timeout=aiohttp.ClientTimeout(total=15), auto_decompress=False) as session:
             for redirect in range(4):
@@ -90,7 +132,8 @@ async def fetch_attachment(value, *, maximum_bytes):
                     if response.status in (301, 302, 303, 307, 308):
                         if redirect == 3 or "Location" not in response.headers:
                             raise TaskError("host_image_fetch_failed", "image redirect could not be resolved")
-                        current = public_url(urljoin(current, response.headers["Location"]))
+                        current = public_url(urljoin(current, response.headers["Location"]),
+                                              trusted_origins=trusted_origins)
                         continue
                     if response.status != 200 or response.headers.get("Content-Encoding", "identity") != "identity":
                         raise TaskError("host_image_fetch_failed", "original image could not be fetched")
@@ -103,7 +146,8 @@ async def fetch_attachment(value, *, maximum_bytes):
                         content.extend(chunk)
                     return bytes(content)
     finally:
-        await resolver.close()
+        if resolver is not None:
+            await resolver.close()
     raise TaskError("host_image_fetch_failed", "original image could not be fetched")
 
 
@@ -147,6 +191,22 @@ def _read_host_resolved_image(value):
     return content
 
 
+def read_local_attachment(value, root):
+    """Read an attachment the host adapter already downloaded into its media dir."""
+    if not root:
+        raise TaskError("host_image_location_invalid", "local attachment has no trusted media directory")
+    try:
+        base = Path(root).resolve(strict=True)
+        target = Path(value).resolve(strict=True)
+    except OSError:
+        raise TaskError("host_image_unavailable", "local attachment is no longer available") from None
+    if not target.is_relative_to(base) or not target.is_file():
+        raise TaskError("host_image_location_invalid", "local attachment is outside the trusted media directory")
+    if target.stat().st_size > MAX_IMAGE_BYTES:
+        raise TaskError("host_image_limit", "image exceeds the intake byte budget")
+    return target.read_bytes()
+
+
 async def load_native_image(locator):
     if not isinstance(locator, NativeImageLocator):
         raise TaskError("host_image_location_invalid", "image intake needs a frozen host component")
@@ -159,9 +219,13 @@ async def load_native_image(locator):
             content = base64.b64decode(encoded, validate=True)
         elif locator.host_resolved is True and Path(value).is_absolute():
             content = await asyncio.to_thread(_read_host_resolved_image, value)
+        elif (getattr(locator, "local_root", None) and not URL(value).scheme
+              and Path(value).is_absolute()):
+            content = await asyncio.to_thread(read_local_attachment, value, locator.local_root)
         else:
             # Do not interpret a network message's file/path field as local disk authority.
-            content = await fetch_image(value)
+            origin = getattr(locator, "origin", None)
+            content = await fetch_image(value, trusted_origins=(origin,) if origin else ())
         return await asyncio.to_thread(inspect_image, content, locator.position)
     except TaskError:
         raise

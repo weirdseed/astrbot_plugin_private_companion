@@ -3,6 +3,8 @@
 import asyncio
 from dataclasses import dataclass, field, replace
 import json
+import os
+import tempfile
 
 from astrbot.core.message.components import Image, Reply
 from astrbot.core.utils.quoted_message.chain_parser import OneBotPayloadParser
@@ -58,6 +60,32 @@ class _QuotedImages:
         return False
 
 
+def _trusted_media_origin(event):
+    """The bridge serves chat attachments from its own loopback HTTP origin."""
+    meta = getattr(event, "platform_meta", None)
+    if getattr(meta, "name", None) != "agent_wechat":
+        return None
+    base = getattr(getattr(event, "client", None), "base_url", None)
+    return base if type(base) is str and base else None
+
+
+def _trusted_media_root(event):
+    """The WeChat bridge downloads inbound media into AstrBot's temp directory."""
+    meta = getattr(event, "platform_meta", None)
+    if getattr(meta, "name", None) != "agent_wechat":
+        return None
+    try:
+        from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
+        base = get_astrbot_temp_path()
+    except Exception:
+        base = tempfile.gettempdir()
+    root = os.path.join(base, "agent_wechat_bridge")
+    if os.path.isdir(root):
+        return root
+    fallback = os.path.join(tempfile.gettempdir(), "agent_wechat_bridge")
+    return fallback if os.path.isdir(fallback) else root
+
+
 def direct_image_locators(locators):
     """Keep the direct attachments and drop every quoted reference.
 
@@ -72,15 +100,17 @@ def direct_image_locators(locators):
 
 def frozen_image_locators(event):
     """Freeze current attachments and quotes, in AstrBot's attachment order."""
+    origin = _trusted_media_origin(event)
+    local_root = _trusted_media_root(event)
     images, quotes = [], []
     for position, part in enumerate(getattr(getattr(event, "message_obj", None), "message", ())):
         if type(part) is Image:
-            images.append(image_locator(position, part.file, part.url))
+            images.append(image_locator(position, part.file, part.url, origin, local_root))
         elif type(part) is Reply:
             identifier = _identifier(part.id)
             if identifier is None:
                 continue
-            embedded = tuple(image_locator(index, item.file, item.url)
+            embedded = tuple(image_locator(index, item.file, item.url, origin, local_root)
                              for index, item in enumerate(part.chain or ()) if type(item) is Image)
             quotes.append(_QuotedImages(position, identifier, _identifier(part.sender_id),
                 part.time if type(part.time) is int and part.time > 0 else None,

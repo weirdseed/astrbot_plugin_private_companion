@@ -18,13 +18,16 @@ class NativeQuoteLocator:
     message_id: str
 
 
-def image_locator(position, file, url):
+def image_locator(position, file, url, origin=None, local_root=None):
     # Inspect the protocol prefix before any path or filename operation. In
     # particular, keep base64 originals when the host also supplies a URL.
     value = file if type(file) is str and file.startswith("base64://") else url or file
     if type(value) is not str or not value:
         raise TaskError("host_image_unavailable", "image has no original host attachment")
-    return NativeImageLocator(position, value)
+    return NativeImageLocator(position, value,
+                              False,
+                              origin if type(origin) is str and origin else None,
+                              local_root if type(local_root) is str and local_root else None)
 
 
 def audio_locator(position, file, url):
