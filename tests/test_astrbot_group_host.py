@@ -17,7 +17,7 @@ from companion_v2.execution.models import TaskContext, digest
 from companion_v2.foundation.refs import AudienceRef, ScopeKind, SubjectKind
 from companion_v2.identity_policy.personas import PersonaDirectory
 from companion_v2.memory.models import AtomRef
-from astrbot.core.message.components import File
+from astrbot.core.message.components import File, Image
 from astrbot_host.group_authority import GroupAuthority
 from astrbot_host.image_access import GROUP_IMAGE_CAPABILITIES
 from astrbot_host.multi_api import PREFIX
@@ -188,6 +188,17 @@ class GroupHostTests(GroupFixture, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(captured.is_success, captured.failure)
         self.assertIn('"status"', captured.unwrap().text)
         self.assertIn("未读取正文", captured.unwrap().text)
+
+    async def test_bridge_image_only_group_message_is_readable(self):
+        """agent_wechat keeps its payload in raw_message["message"] as an object."""
+        await self.start_host()
+        event = self.group_event(identifier="group-bridge-image", text="")
+        event.message_obj.raw_message = {"thread": {"id": "56266193979@chatroom"}, "message": {"type": 3}}
+        event.message_obj.message = [Image(file="/tmp/agent_wechat_bridge/asset.jpg")]
+
+        text = self.controller.session.bridge.groups._text_only_parts(event, NS(account_id="100"))
+
+        self.assertIn("[图片不可用]", text)
 
     async def test_private_memory_never_enters_group_prompt_or_group_tools(self):
         app = await self.start_host()

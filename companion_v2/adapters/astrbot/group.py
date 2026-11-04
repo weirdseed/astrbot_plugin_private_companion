@@ -144,8 +144,13 @@ class NativeGroupBridge(NativePrivateBridge):
         media_only_allowed = (
             bool(raw_kinds) and raw_kinds.issubset(
                 {"image", "record", "video", "file", "reply", "forward"})) or (
-            segments is None and any(kind in {"Image", "Record", "Video", "File", "Reply", "Forward"}
-                                     for kind in native_kinds))
+            # Bridge adapters (agent_wechat) carry their own payload under
+            # raw_message["message"], so the OneBot envelope is absent rather than
+            # an empty list; reading that dict as the segment list made every
+            # image-only group message fail as host_text_invalid.
+            not isinstance(segments, list)
+            and any(kind in {"Image", "Record", "Video", "File", "Reply", "Forward"}
+                    for kind in native_kinds))
         text, has_text = [], False
         for part in parts:
             if isinstance(part, Mapping):
