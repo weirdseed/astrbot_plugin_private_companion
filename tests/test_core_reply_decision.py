@@ -125,11 +125,15 @@ class CoreReplyDecisionTests(GroupFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record["requests"], [])
         self.assertEqual(record["delivery"]["attempts"], 0)
 
-    async def test_wait_keeps_follow_up_candidate_for_same_user_and_is_not_a_sent_reply(self):
+    async def test_wait_on_an_admitted_group_candidate_lets_the_model_decide(self):
         self.prediction = laya_result({"action": "wait", "turn_state": "unfinished"})
         first = self.incoming("unfinished-question", "可以帮我看看吗？我还没说完")
         prepared = await self.intake(first)
-        self.assertTrue(first.call_llm)
+        # An admitted candidate is not held back by Laya's diffuse `wait`; the
+        # model's own group.participation.choose is the turn-taking gate.
+        self.assertTrue(prepared["laya_decision"]["group_candidate_downgraded"])
+        self.assertEqual(prepared["laya_decision"]["applied_decision"]["action"], "reply")
+        self.assertFalse(prepared["laya_decision"]["suppress_reply"])
         self.assert_no_provider_or_send(first)
         self.clock.advance(timedelta(seconds=1))
         second = self.incoming("question-continuation", "就是选哪一款更合适")
@@ -140,13 +144,11 @@ class CoreReplyDecisionTests(GroupFixture, unittest.IsolatedAsyncioTestCase):
         await self.intake(second)
         self.assertTrue(second.is_at_or_wake_command)
         self.assertTrue(any("还没说完" in item["text"] for item in self.calls[-1][0]["recent_group_messages"]))
-        saved = self.app.tools.group_participation.admission.recorded_core_reply(prepared["context"], prepared["event_id"])
-        self.assertEqual(saved["participation"]["decision_action"], "wait")
         laya_row = self.app.runtime.read_one("SELECT processing_json FROM laya_decision_events WHERE batch_id = ?",
                                              (prepared["turn_id"],))
         processing = json.loads(laya_row["processing_json"])
-        self.assertEqual(processing["application"]["applied_decision"]["action"], "wait")
-        self.assertTrue(processing["application"]["suppress_reply"])
+        self.assertEqual(processing["application"]["applied_decision"]["action"], "reply")
+        self.assertFalse(processing["application"]["suppress_reply"])
 
     async def test_reply_interject_and_clarify_reach_core_with_enabled_guidance(self):
         for action in ("reply", "interject", "clarify"):

@@ -204,6 +204,15 @@ async def prepare_core_reply_decision(event, prepared, *, application, now=None)
         if active.get("action") == "wait" or not _PRIVATE_NO_REPLY.search(str(facts.get("user_text") or "")):
             active = {**active, "action": "reply"}
             result["private_suppression_downgraded"] = True
+    elif (prepared.get("channel") == "group" and active.get("action") == "wait"
+            and (prepared.get("group_admission") or {}).get("admitted") is True):
+        # An admitted group turn has already passed the wakeup gate. Laya answers
+        # `wait` whenever its four probabilities stay diffuse (reply .18 / wait .33
+        # / silent .30), which ended every self-initiated turn before the model
+        # could run group.participation.choose. Turn-taking belongs to that tool;
+        # a silent group turn stays Laya's call.
+        active = {**active, "action": "reply"}
+        result["group_candidate_downgraded"] = True
     result = {**result, "applied_decision": active, "suppress_reply": active.get("action") in ("wait", "silent")}
     record_application = getattr(service, "record_application", None)
     if callable(record_application):
