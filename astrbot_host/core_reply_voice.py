@@ -330,7 +330,11 @@ async def prepare_core_reply_voice_message(
                 # is waiting.  A slow or failing TTS endpoint must not hold that
                 # segment for a minute; cap the budget and degrade to text.
                 configured = float(policy.timeout_seconds or 0)
-                budget = min(configured, SEGMENTED_TTS_BUDGET_SECONDS) if configured > 0 else SEGMENTED_TTS_BUDGET_SECONDS
+                budget = configured if configured > 0 else SEGMENTED_TTS_BUDGET_SECONDS
+                if policy.delivery_mode != "voice_only":
+                    # 文字已经先发出去了才需要压缩等待；voice_only 下文字同样在等，
+                    # 压到 8 秒只会把本地 TTS 打成 TimeoutError 再回退成文字。
+                    budget = min(budget, SEGMENTED_TTS_BUDGET_SECONDS)
                 audio = await asyncio.wait_for(render, timeout=budget)
             else:
                 audio = await render

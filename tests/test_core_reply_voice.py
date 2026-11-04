@@ -435,6 +435,35 @@ class CoreReplyVoiceTests(unittest.IsolatedAsyncioTestCase):
             segment_index=1, segment_count=2)
         self.assertEqual(last.get_plain_text(), "第一段。 第二段。")
 
+    async def test_whole_reply_voice_only_ignores_the_short_segment_budget(self):
+        """voice_only already holds the text, so a slow local TTS must not be cut at 8s."""
+        import asyncio
+
+        from astrbot_host import core_reply_voice as module
+
+        original = module.SEGMENTED_TTS_BUDGET_SECONDS
+        module.SEGMENTED_TTS_BUDGET_SECONDS = 0.05
+        try:
+            event = FakeEvent()
+            policy = VoiceReplyPolicy(segment_mode="whole", delivery_mode="voice_only")
+            prepared = {"context": object(), "event_id": "whole-slow", "voice_reply_policy": policy}
+            prepare_core_reply_event(event, prepared, authorize=_allow)
+
+            async def renderer(_, text, **__):
+                await asyncio.sleep(0.2)
+                return {"type": "record", "data": {"file": "base64://YQ=="}}
+
+            parts = [MessageChain(chain=[Plain("第一段。")]), MessageChain(chain=[Plain("第二段。")])]
+            await prepare_core_reply_voice_message(
+                event, prepared, parts[0], renderer=renderer, delivery=None, authorize=_allow,
+                segment_index=0, segment_count=2)
+            last = await prepare_core_reply_voice_message(
+                event, prepared, parts[1], renderer=renderer, delivery=None, authorize=_allow,
+                segment_index=1, segment_count=2)
+            self.assertEqual([type(part) for part in last.chain], [Record])
+        finally:
+            module.SEGMENTED_TTS_BUDGET_SECONDS = original
+
     async def test_whole_reply_voice_survives_a_trailing_media_only_segment(self):
         """A reply ends with an image: the joined speech must still be synthesized."""
         event = FakeEvent()
