@@ -282,6 +282,16 @@ class CoreReplyDecisionTests(GroupFixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(getattr(event, "is_at_or_wake_command", False))
         self.assert_no_provider_or_send(event)
 
+    async def test_private_wait_downgrades_to_a_reply_instead_of_silence(self):
+        self.prediction = laya_result({"action": "wait"})
+        event = self.event(identifier="private-greeting", text="早啊")
+        prepared = await self.intake(event)
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(prepared["laya_decision"]["private_wait_downgraded"])
+        self.assertEqual(prepared["laya_decision"]["applied_decision"]["action"], "reply")
+        self.assertFalse(prepared["laya_decision"]["suppress_reply"])
+        self.assertTrue(getattr(event, "is_at_or_wake_command", False))
+
     async def test_native_private_and_group_resolvers_read_same_global_configuration(self):
         private = (await self.controller.prepare_core_reply(self.event(identifier="global-private"))).unwrap()
         group = (await self.controller.prepare_core_reply(self.incoming("global-group", "群聊天"))).unwrap()

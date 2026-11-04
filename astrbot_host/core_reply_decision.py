@@ -191,6 +191,15 @@ async def prepare_core_reply_decision(event, prepared, *, application, now=None)
     except Exception as error:
         result = {"status": "failed", "reason": getattr(error, "code", type(error).__name__)}
     active, instruction = decision_advice(result)
+    # Laya's `wait` means "hold the floor, a continuation may follow". A private
+    # turn has already cleared the debounce window, and holding a one-to-one chat
+    # reads as being ignored: 2026-11-04 07:38 the classifier picked wait for
+    # 「早啊」 with reply 0.18 / wait 0.33 / silent 0.30 and the greeting went
+    # unanswered. Private `wait` therefore falls back to a reply while `silent`
+    # (an explicit "nothing to add") keeps suppressing.
+    if prepared.get("channel") != "group" and active.get("action") == "wait":
+        active = {**active, "action": "reply"}
+        result["private_wait_downgraded"] = True
     result = {**result, "applied_decision": active, "suppress_reply": active.get("action") in ("wait", "silent")}
     record_application = getattr(service, "record_application", None)
     if callable(record_application):
