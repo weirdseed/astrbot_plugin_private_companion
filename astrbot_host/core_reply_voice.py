@@ -155,6 +155,22 @@ def _clean_plain_runs(message, policy):
     return visible, tuple(spans), cleaned
 
 
+def _empty_message(message):
+    """A message that carries nothing: the segment is held, not sent."""
+    derive = getattr(message, "derive", None)
+    return derive([]) if callable(derive) else MessageChain(chain=[])
+
+
+def _joined_message(messages):
+    chain = []
+    for message in messages:
+        parts = getattr(message, "chain", None)
+        chain.extend(parts if isinstance(parts, (list, tuple))
+                     else ([Plain(message)] if isinstance(message, str) and message else []))
+    derive = getattr(messages[-1], "derive", None)
+    return derive(chain) if callable(derive) else MessageChain(chain=chain)
+
+
 def _message_with_voice(message, visible, records, policy, *, hide_text):
     chain = getattr(message, "chain", None)
     if not isinstance(chain, (list, tuple)):
@@ -244,17 +260,25 @@ async def prepare_core_reply_voice_message(
         # Whole-reply voice waits until every text segment has been prepared,
         # then synthesizes the joined speech once.  Per-segment TTS cuts the
         # sentence context and produces noticeably flatter prosody.
-        bucket = core.setdefault("_voice_whole_segments", {"visible": [], "speech": []})
+        bucket = core.setdefault("_voice_whole_segments", {"visible": [], "speech": [], "messages": []})
+        bucket.setdefault("messages", []).append(cleaned_message)
         if visible.strip():
             bucket["visible"].append(visible)
         if segment_speech:
             bucket["speech"].append(segment_speech)
         if segment_index < segment_count - 1:
             note["state"] = "segment_deferred"
-            return cleaned_message
+            # voice_only speaks the whole reply once, so a text segment released
+            # early arrives as text and is then spoken again as audio. Hold it
+            # until the voiced message can carry it -- or drop it together with
+            # the voice if synthesis fails.
+            return _empty_message(cleaned_message) if policy.delivery_mode == "voice_only" else cleaned_message
+        deferred = bucket.pop("messages", [])
         visible = "\n".join(bucket["visible"]).strip()
         speech = "\n".join(bucket["speech"]).strip()
         core.pop("_voice_whole_segments", None)
+        if deferred and policy.delivery_mode == "voice_only":
+            cleaned_message = _joined_message(deferred)
         if not speech:
             note["state"] = "no_authored_speech"
             logger.info("[CompanionV2][media] stage=delivery event_ref=%s media=voice state=%s segment=%s/%s",
@@ -337,9 +361,7 @@ async def prepare_core_reply_voice_message(
         core["_voice_reply_pending_claim"] = (delivery, claim)
     same_text = re.sub(r"\s+", "", visible) == re.sub(r"\s+", "", visible_speech(speech))
     return _message_with_voice(cleaned_message, visible, records, policy,
-                               hide_text=(policy.delivery_mode == "voice_only"
-                                          and not (policy.segment_mode == "whole" and segment_count > 1)
-                                          and same_text))
+                               hide_text=(policy.delivery_mode == "voice_only" and same_text))
 
 
 def prepare_core_reply_voice(event):

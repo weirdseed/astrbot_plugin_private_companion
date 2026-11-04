@@ -397,6 +397,44 @@ class CoreReplyVoiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([[type(part) for part in message.chain] for message in event.sent], [[Plain], [Record]])
         self.assertEqual(event.get_extra(CORE_REPLY_CONTEXT_EXTRA)["send_returns"], 2)
 
+    async def test_whole_reply_voice_only_holds_text_segments_until_the_voice(self):
+        """voice_only must not send the words as text and then speak them again."""
+        event = FakeEvent()
+        policy = VoiceReplyPolicy(segment_mode="whole", delivery_mode="voice_only")
+        prepared = {"context": object(), "event_id": "whole-only", "voice_reply_policy": policy}
+        prepare_core_reply_event(event, prepared, authorize=_allow)
+
+        async def renderer(_, text, **__):
+            return {"type": "record", "data": {"file": "base64://YQ=="}}
+
+        parts = [MessageChain(chain=[Plain("第一段。")]), MessageChain(chain=[Plain("第二段。")])]
+        first = await prepare_core_reply_voice_message(
+            event, prepared, parts[0], renderer=renderer, delivery=None, authorize=_allow,
+            segment_index=0, segment_count=2)
+        self.assertEqual(list(first.chain), [])
+        last = await prepare_core_reply_voice_message(
+            event, prepared, parts[1], renderer=renderer, delivery=None, authorize=_allow,
+            segment_index=1, segment_count=2)
+        self.assertEqual([type(part) for part in last.chain], [Record])
+
+    async def test_whole_reply_voice_only_returns_the_held_text_when_tts_fails(self):
+        event = FakeEvent()
+        policy = VoiceReplyPolicy(segment_mode="whole", delivery_mode="voice_only")
+        prepared = {"context": object(), "event_id": "whole-fail", "voice_reply_policy": policy}
+        prepare_core_reply_event(event, prepared, authorize=_allow)
+
+        async def renderer(*_, **__):
+            raise RuntimeError("tts down")
+
+        parts = [MessageChain(chain=[Plain("第一段。")]), MessageChain(chain=[Plain("第二段。")])]
+        await prepare_core_reply_voice_message(
+            event, prepared, parts[0], renderer=renderer, delivery=None, authorize=_allow,
+            segment_index=0, segment_count=2)
+        last = await prepare_core_reply_voice_message(
+            event, prepared, parts[1], renderer=renderer, delivery=None, authorize=_allow,
+            segment_index=1, segment_count=2)
+        self.assertEqual(last.get_plain_text(), "第一段。 第二段。")
+
     async def test_whole_reply_voice_survives_a_trailing_media_only_segment(self):
         """A reply ends with an image: the joined speech must still be synthesized."""
         event = FakeEvent()
