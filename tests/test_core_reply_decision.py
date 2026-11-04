@@ -287,7 +287,16 @@ class CoreReplyDecisionTests(GroupFixture, unittest.IsolatedAsyncioTestCase):
         event = self.event(identifier="private-greeting", text="早啊")
         prepared = await self.intake(event)
         self.assertEqual(len(self.calls), 1)
-        self.assertTrue(prepared["laya_decision"]["private_wait_downgraded"])
+        self.assertTrue(prepared["laya_decision"]["private_suppression_downgraded"])
+        self.assertEqual(prepared["laya_decision"]["applied_decision"]["action"], "reply")
+        self.assertFalse(prepared["laya_decision"]["suppress_reply"])
+        self.assertTrue(getattr(event, "is_at_or_wake_command", False))
+
+    async def test_private_silent_still_replies_unless_the_user_declines(self):
+        self.prediction = laya_result({"action": "silent"})
+        event = self.event(identifier="private-intro", text="介绍一下自己")
+        prepared = await self.intake(event)
+        self.assertTrue(prepared["laya_decision"]["private_suppression_downgraded"])
         self.assertEqual(prepared["laya_decision"]["applied_decision"]["action"], "reply")
         self.assertFalse(prepared["laya_decision"]["suppress_reply"])
         self.assertTrue(getattr(event, "is_at_or_wake_command", False))

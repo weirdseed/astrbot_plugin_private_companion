@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 import logging
+import re
 from time import perf_counter
 
 from companion_v2.decision.conversation import decision_advice
@@ -11,6 +12,8 @@ from .group_admission import group_trigger_facts
 
 
 logger = logging.getLogger(__name__)
+
+_PRIVATE_NO_REPLY = re.compile(r"(?:不用|不需要|别|不要)\s*(?:回复|回我|回答|理我)")
 
 
 def _recent_private_messages(application, context, event_id, at):
@@ -191,15 +194,16 @@ async def prepare_core_reply_decision(event, prepared, *, application, now=None)
     except Exception as error:
         result = {"status": "failed", "reason": getattr(error, "code", type(error).__name__)}
     active, instruction = decision_advice(result)
-    # Laya's `wait` means "hold the floor, a continuation may follow". A private
-    # turn has already cleared the debounce window, and holding a one-to-one chat
-    # reads as being ignored: 2026-11-04 07:38 the classifier picked wait for
-    # 「早啊」 with reply 0.18 / wait 0.33 / silent 0.30 and the greeting went
-    # unanswered. Private `wait` therefore falls back to a reply while `silent`
-    # (an explicit "nothing to add") keeps suppressing.
-    if prepared.get("channel") != "group" and active.get("action") == "wait":
-        active = {**active, "action": "reply"}
-        result["private_wait_downgraded"] = True
+    # A private turn has already cleared the debounce window, so Laya's `wait`
+    # and `silent` both read as being ignored: on 2026-11-04 it put 「早啊」 on
+    # hold (reply 0.18 / wait 0.33 / silent 0.30) and answered 「介绍一下自己」
+    # with silent. One-to-one turns therefore reply unless the user asked not to,
+    # which is the only case the classifier cannot be trusted to detect on its
+    # own. Groups keep every Laya decision: silence there is ordinary turn-taking.
+    if prepared.get("channel") != "group" and active.get("action") in ("wait", "silent"):
+        if active.get("action") == "wait" or not _PRIVATE_NO_REPLY.search(str(facts.get("user_text") or "")):
+            active = {**active, "action": "reply"}
+            result["private_suppression_downgraded"] = True
     result = {**result, "applied_decision": active, "suppress_reply": active.get("action") in ("wait", "silent")}
     record_application = getattr(service, "record_application", None)
     if callable(record_application):
